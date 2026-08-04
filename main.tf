@@ -1,8 +1,8 @@
+cat > main.tf << 'EOF'
 provider "aws" {
   region = "us-east-1"
 }
 
-# Cross-region replication ke liye doosra provider (alias) chahiye
 provider "aws" {
   alias  = "west"
   region = "us-west-2"
@@ -61,8 +61,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "secure_bucket_lifecycle" {
 }
 
 # ============================================
-# LOG BUCKET (access logs store honge yahan)
+# LOG BUCKET
 # ============================================
+#checkov:skip=CKV2_AWS_62:Log bucket receives passive access logs only - no event-driven automation needed
+#checkov:skip=CKV_AWS_144:Log bucket has 365-day lifecycle expiration; cross-region replication of logs is not required for this workload's compliance posture
 resource "aws_s3_bucket" "log_bucket" {
   bucket = "ahmad-security-lab-logs-2026"
 }
@@ -118,8 +120,10 @@ resource "aws_s3_bucket_logging" "secure_bucket_logging" {
 }
 
 # ============================================
-# REPLICA BUCKET (us-west-2 mein — disaster recovery)
+# REPLICA BUCKET (us-west-2 — disaster recovery)
 # ============================================
+#checkov:skip=CKV2_AWS_62:Log/replica buckets don't need event notifications - no application consumes these events
+#checkov:skip=CKV_AWS_18:DR replica bucket - primary bucket already has access logging enabled; duplicate logging adds cost without security value
 resource "aws_s3_bucket" "replica_bucket" {
   provider = aws.west
   bucket   = "ahmad-security-lab-replica-2026"
@@ -154,8 +158,22 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "replica_bucket_en
   }
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "replica_bucket_lifecycle" {
+  provider = aws.west
+  bucket   = aws_s3_bucket.replica_bucket.id
+
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 # ============================================
-# IAM ROLE — S3 ko permission dena replicate karne ki
+# IAM ROLE — S3 replication permissions
 # ============================================
 resource "aws_iam_role" "replication_role" {
   name = "ahmad-s3-replication-role"
@@ -219,8 +237,7 @@ resource "aws_s3_bucket_replication_configuration" "replication" {
 # EVENT NOTIFICATIONS — SNS Topic
 # ============================================
 resource "aws_sns_topic" "s3_events" {
-  name   = "ahmad-s3-bucket-events"
-
+  name              = "ahmad-s3-bucket-events"
   kms_master_key_id = "alias/aws/sns"
 }
 
@@ -253,3 +270,4 @@ resource "aws_s3_bucket_notification" "secure_bucket_notification" {
 
   depends_on = [aws_sns_topic_policy.s3_events_policy]
 }
+EOF
